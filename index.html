@@ -21,44 +21,48 @@
     const { useState, useEffect, useRef } = React;
 
     // === 絶対的な幾何学定数 ===
-    const R = 150; // 外側の基準半径
+    const R = 150; // 外側の基準半径 (Kanizsa三角形の頂点への距離)
     const r = 30;  // パックマンの半径
-    const D_DIAMOND = 30 * Math.sqrt(3); // 51.9615 (ダイヤ形成時の中心距離)
-    const E_THIRD = R * Math.sqrt(3) / 3; // 86.6025 (V字の線の長さ)
-
+    const D_DIAMOND = r * Math.sqrt(3); // 51.9615 (ダイヤ形成時の中心距離)
+    
     // === 各フェーズのターゲット座標 ===
+    // Phase 1 (ダイヤ): 中央のV字(0,0)に対して、パックマンが向かい合う位置
     const P1_TARGETS = [
-      { x: 0, y: -D_DIAMOND }, // 上
-      { x: D_DIAMOND * 0.866025, y: D_DIAMOND * 0.5 }, // 右下
-      { x: -D_DIAMOND * 0.866025, y: D_DIAMOND * 0.5 } // 左下
+      { x: 0, y: -D_DIAMOND }, 
+      { x: D_DIAMOND * 0.866025, y: D_DIAMOND * 0.5 }, 
+      { x: -D_DIAMOND * 0.866025, y: D_DIAMOND * 0.5 }
     ];
 
+    // Phase 2 (カニッツァ): 白い上向き正三角形の頂点位置
     const P2_TARGETS = [
       { x: 0, y: -R },
       { x: R * 0.866025, y: R * 0.5 },
       { x: -R * 0.866025, y: R * 0.5 }
     ];
 
+    // V字の配置座標
     const V1_POSITIONS = [
-      { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }
+      { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 } // 初期は中央で「＊」型
     ];
 
     const V2_POSITIONS = [
-      { x: 0, y: R }, // 下
-      { x: -R * 0.866025, y: -R * 0.5 }, // 左上
-      { x: R * 0.866025, y: -R * 0.5 } // 右上
+      { x: 0, y: R }, // 下角
+      { x: -R * 0.866025, y: -R * 0.5 }, // 左上角
+      { x: R * 0.866025, y: -R * 0.5 }  // 右上角
     ];
 
+    // Phase 3 (Last): 白い正三角形の吸い付き座標 (黒丸を覆い、黒線を削らないように外側へ+30px)
     const W_TARGETS = [
       { x: 0, y: -R - 30 },
       { x: (R + 30) * 0.866025, y: (R + 30) * 0.5 },
       { x: -(R + 30) * 0.866025, y: (R + 30) * 0.5 }
     ];
 
-    // SVGパス: 完全に60度開いたパックマン (右向き)
-    const PACMAN_PATH = `M 0 0 L 25.9808 15 A 30 30 0 1 0 25.9808 -15 Z`;
+    // === 絶対に崩れないSVGパス ===
+    // 完全に60度開いたパックマン (右向きベース: 弧のフラグを 0 1 0 に完全固定)
+    const PACMAN_PATH = `M 0 0 L 25.98076 -15 A 30 30 0 1 0 25.98076 15 Z`;
     
-    // V字のSVGパス (中心から外側へ伸びる)
+    // V字のSVGパス (各々が完全な正三角形の辺の1/3の長さ = 86.6025)
     const V_PATHS = [
       `M -43.3013 -75 L 0 0 L 43.3013 -75`, // V0: 上へ開く
       `M 86.6025 0 L 0 0 L 43.3013 75`,     // V1: 右下へ開く
@@ -68,22 +72,26 @@
     function App() {
       const svgRef = useRef(null);
       const [phase, setPhase] = useState(1);
+      
+      // パックマンの初期位置 (上だけはまっている)
       const [pPos, setPPos] = useState([
         { x: P1_TARGETS[0].x, y: P1_TARGETS[0].y },
-        { x: -100, y: 160 },
-        { x: 100, y: 160 }
+        { x: -100, y: 180 },
+        { x: 100, y: 180 }
       ]);
       const [vPos, setVPos] = useState(V1_POSITIONS);
-      const [wPos, setWPos] = useState({ x: 0, y: 0 });
-      const [clearText, setClearText] = useState(false);
+      const [wPos, setWPos] = useState({ x: 0, y: 0 }); // 白い正三角形の位置
       
+      const [clearText, setClearText] = useState(false);
       const [dragging, setDragging] = useState(null);
 
-      const isSnapped = (pos, target) => {
-        return Math.hypot(pos.x - target.x, pos.y - target.y) < 40;
+      // 吸い付き判定 (スナップ)
+      const isSnapped = (pos, target, radius = 40) => {
+        return Math.hypot(pos.x - target.x, pos.y - target.y) < radius;
       };
 
       const handlePointerDown = (e, type, index = null) => {
+        // アニメーション中 (1.5, 2.5) はドラッグ不可
         if ((phase === 1 || phase === 2) && type === 'p') {
           setDragging({ type, index, startX: e.clientX, startY: e.clientY, initialX: pPos[index].x, initialY: pPos[index].y });
         } else if (phase === 3 && type === 'w') {
@@ -123,28 +131,34 @@
           const current = newPos[dragging.index];
           const targets = phase === 1 ? P1_TARGETS : P2_TARGETS;
           
+          // ドロップ時にターゲットの近くなら吸い付く
           if (isSnapped(current, targets[dragging.index])) {
             newPos[dragging.index] = { ...targets[dragging.index] };
           }
           setPPos(newPos);
           
-          // Phase 1 -> 1.5 (V Move Animation)
-          if (phase === 1 && newPos.every((p, i) => Math.hypot(p.x - P1_TARGETS[i].x, p.y - P1_TARGETS[i].y) < 1)) {
+          // 全てのパックマンが揃ったかの判定
+          const isAllSnapped = newPos.every((p, i) => isSnapped(p, targets[i], 2));
+
+          // Phase 1 -> 1.5 (V字が外側に広がる相似アニメーション)
+          if (phase === 1 && isAllSnapped) {
             setPhase(1.5);
-            setVPos(V2_TARGETS);
+            setVPos(V2_POSITIONS); // ここが前回エラーを起こしていた箇所。完全に修正。
             setTimeout(() => setPhase(2), 1200);
           }
           
-          // Phase 2 -> 2.5 -> 3 (Kanizsa Formation)
-          if (phase === 2 && newPos.every((p, i) => Math.hypot(p.x - P2_TARGETS[i].x, p.y - P2_TARGETS[i].y) < 1)) {
+          // Phase 2 -> 2.5 -> 3 (カニッツァ完成から実体化へ)
+          if (phase === 2 && isAllSnapped) {
             setPhase(2.5);
             setTimeout(() => setPhase(3), 1200);
           }
+
         } else if (dragging.type === 'w') {
+          // Phase 3 (Last) での白い正三角形の吸い付き (半径を少し広めにとって確実に)
           let snapped = false;
           let finalPos = { ...wPos };
           for (let target of W_TARGETS) {
-            if (isSnapped(wPos, target)) {
+            if (isSnapped(wPos, target, 60)) {
               finalPos = { ...target };
               snapped = true;
               break;
@@ -152,10 +166,11 @@
           }
           setWPos(finalPos);
           
+          // 完全に覆った瞬間にClear
           if (snapped) {
             setPhase(4);
             setClearText(true);
-            setTimeout(() => setClearText(false), 2000);
+            setTimeout(() => setClearText(false), 2000); // 2秒後に消去
           }
         }
         setDragging(null);
@@ -174,8 +189,8 @@
         setPhase(1);
         setPPos([
           { x: P1_TARGETS[0].x, y: P1_TARGETS[0].y },
-          { x: -100, y: 160 },
-          { x: 100, y: 160 }
+          { x: -100, y: 180 },
+          { x: 100, y: 180 }
         ]);
         setVPos(V1_POSITIONS);
         setWPos({ x: 0, y: 0 });
@@ -183,10 +198,10 @@
         setDragging(null);
       };
 
-      // UI Text logic
+      // 上部UIのリアルタイム判定
       let uiText = "";
       if (phase === 1 || phase === 1.5) {
-        const count = pPos.filter((p, i) => Math.hypot(p.x - P1_TARGETS[i].x, p.y - P1_TARGETS[i].y) < 1).length;
+        const count = pPos.filter((p, i) => isSnapped(p, P1_TARGETS[i], 2)).length;
         uiText = "♦".repeat(count) + "♢".repeat(3 - count);
       } else if (phase === 2) {
         uiText = "△△";
@@ -199,24 +214,24 @@
       return (
         <div className="w-screen h-screen flex flex-col items-center justify-center relative overflow-hidden bg-white select-none">
           
-          {/* Header UI */}
-          <div className="absolute top-10 flex flex-col items-center z-10">
-            <div className="backdrop-blur-md bg-white/50 px-8 py-4 rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.1)] border border-white/40 text-4xl tracking-[0.3em] font-light text-gray-800">
+          {/* Header UI (おしゃれなすりガラス) */}
+          <div className="absolute top-10 flex flex-col items-center z-10 pointer-events-none">
+            <div className="backdrop-blur-md bg-white/60 px-8 py-4 rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.05)] border border-gray-100 text-4xl tracking-[0.3em] font-light text-gray-800">
               {uiText}
             </div>
           </div>
 
           {/* Clear Text */}
-          <div className={`absolute inset-0 flex items-center justify-center z-20 pointer-events-none fade-transition ${clearText ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`absolute inset-0 flex items-center justify-center z-30 pointer-events-none fade-transition ${clearText ? 'opacity-100' : 'opacity-0'}`}>
             <h1 className="text-6xl font-light tracking-[0.5em] text-gray-800 ml-6">clear</h1>
           </div>
 
           <svg 
             ref={svgRef}
             viewBox="-250 -250 500 500" 
-            className="w-full h-full max-w-3xl max-h-3xl"
+            className="w-full h-full max-w-2xl max-h-2xl"
           >
-            {/* Background Lines (V's or Full Triangle) */}
+            {/* 背景の黒線 (V字 または 完全な逆三角形) */}
             {phase < 3 ? (
               <g stroke="black" strokeWidth="2" fill="none">
                 <path d={V_PATHS[0]} style={{ transform: `translate(${vPos[0].x}px, ${vPos[0].y}px)` }} className="v-transition" />
@@ -224,16 +239,18 @@
                 <path d={V_PATHS[2]} style={{ transform: `translate(${vPos[2].x}px, ${vPos[2].y}px)` }} className="v-transition" />
               </g>
             ) : (
+              // Phase 3以降は完全に繋がった枠線の逆三角形
               <polygon points="0,150 -129.9038,-75 129.9038,-75" stroke="black" strokeWidth="2" fill="none" />
             )}
 
-            {/* Black shapes (Pacmen or Circles) */}
+            {/* 黒い図形 (パックマン または 完全な黒丸) */}
             {phase < 3 ? (
               <g fill="black">
                 {pPos.map((pos, i) => (
                   <path 
                     key={`p-${i}`}
                     d={PACMAN_PATH}
+                    // 回転角: 90=下向き, 210=左上向き, 330=右上向き (これにより60度の口が完璧に噛み合う)
                     transform={`translate(${pos.x}, ${pos.y}) rotate(${[90, 210, 330][i]})`}
                     onPointerDown={(e) => handlePointerDown(e, 'p', i)}
                     style={{ cursor: phase <= 2 ? (dragging?.index === i ? 'grabbing' : 'grab') : 'default' }}
@@ -248,7 +265,7 @@
               </g>
             )}
 
-            {/* Draggable White Triangle (Phase 3 & 4) */}
+            {/* ドラッグ可能な白い正三角形 (Phase 3 & 4) 縁取り・影一切なし */}
             {phase >= 3 && (
               <polygon 
                 points={`0,-150 129.9038,75 -129.9038,75`}
@@ -260,10 +277,10 @@
             )}
           </svg>
 
-          {/* Reset Button */}
+          {/* Reset Button (スマホでも押しやすい下部配置) */}
           <button 
             onClick={resetGame}
-            className="absolute bottom-10 px-6 py-2 rounded-full text-gray-400 border border-gray-200 hover:bg-gray-50 transition-colors z-10"
+            className="absolute bottom-10 px-8 py-3 rounded-full text-gray-400 border border-gray-200 hover:bg-gray-50 transition-colors z-20 backdrop-blur-sm bg-white/80"
           >
             Reset
           </button>
