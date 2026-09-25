@@ -9,7 +9,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background-color: #ffffff; touch-action: none; }
+    body { margin: 0; overflow: hidden; background-color: #ffffff; touch-action: none; overscroll-behavior: none; }
     .fade-transition { transition: opacity 0.5s ease-in-out; }
     .v-transition { transition: transform 1.2s ease-in-out; }
   </style>
@@ -91,7 +91,6 @@
       };
 
       const handlePointerDown = (e, type, index = null) => {
-        // アニメーション中 (1.5, 2.5) はドラッグ不可
         if ((phase === 1 || phase === 2) && type === 'p') {
           setDragging({ type, index, startX: e.clientX, startY: e.clientY, initialX: pPos[index].x, initialY: pPos[index].y });
         } else if (phase === 3 && type === 'w') {
@@ -131,30 +130,26 @@
           const current = newPos[dragging.index];
           const targets = phase === 1 ? P1_TARGETS : P2_TARGETS;
           
-          // ドロップ時にターゲットの近くなら吸い付く
           if (isSnapped(current, targets[dragging.index])) {
             newPos[dragging.index] = { ...targets[dragging.index] };
           }
           setPPos(newPos);
           
-          // 全てのパックマンが揃ったかの判定
-          const isAllSnapped = newPos.every((p, i) => isSnapped(p, targets[i], 2));
+          const isAllSnappedToP1 = newPos.every((p, i) => isSnapped(p, P1_TARGETS[i], 2));
+          const isAllSnappedToP2 = newPos.every((p, i) => isSnapped(p, P2_TARGETS[i], 2));
 
-          // Phase 1 -> 1.5 (V字が外側に広がる相似アニメーション)
-          if (phase === 1 && isAllSnapped) {
+          if (phase === 1 && isAllSnappedToP1) {
             setPhase(1.5);
-            setVPos(V2_POSITIONS); // ここが前回エラーを起こしていた箇所。完全に修正。
+            setVPos(V2_POSITIONS); 
             setTimeout(() => setPhase(2), 1200);
           }
           
-          // Phase 2 -> 2.5 -> 3 (カニッツァ完成から実体化へ)
-          if (phase === 2 && isAllSnapped) {
+          if (phase === 2 && isAllSnappedToP2) {
             setPhase(2.5);
             setTimeout(() => setPhase(3), 1200);
           }
 
         } else if (dragging.type === 'w') {
-          // Phase 3 (Last) での白い正三角形の吸い付き (半径を少し広めにとって確実に)
           let snapped = false;
           let finalPos = { ...wPos };
           for (let target of W_TARGETS) {
@@ -166,11 +161,10 @@
           }
           setWPos(finalPos);
           
-          // 完全に覆った瞬間にClear
           if (snapped) {
             setPhase(4);
             setClearText(true);
-            setTimeout(() => setClearText(false), 2000); // 2秒後に消去
+            setTimeout(() => setClearText(false), 2000);
           }
         }
         setDragging(null);
@@ -198,32 +192,68 @@
         setDragging(null);
       };
 
-      // 上部UIのリアルタイム判定
-      let uiText = "";
-      if (phase === 1 || phase === 1.5) {
-        const count = pPos.filter((p, i) => isSnapped(p, P1_TARGETS[i], 2)).length;
-        uiText = "♦".repeat(count) + "♢".repeat(3 - count);
-      } else if (phase === 2) {
-        uiText = "△△";
-      } else if (phase === 2.5) {
-        uiText = "▲▲";
-      } else {
-        uiText = "◯◯△";
-      }
+      // UI Icons Render Logic
+      const renderUIIcons = () => {
+        const icons = [];
+        
+        if (phase === 1 || phase === 1.5) {
+          // Phase 1: 縦に細長いトランプのダイヤ型 (points="0,-14 9,0 0,14 -9,0")
+          for (let i = 0; i < 3; i++) {
+            const isFilled = isSnapped(pPos[i], P1_TARGETS[i], 2);
+            icons.push(
+              <svg key={`ui-d-${i}`} width="24" height="32" viewBox="-12 -16 24 32" className="mx-1">
+                <polygon points="0,-14 9,0 0,14 -9,0" fill={isFilled ? "#374151" : "none"} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
+              </svg>
+            );
+          }
+        } else if (phase === 2 || phase === 2.5) {
+          // Phase 2: 正三角形 (▲△)
+          // パックマンが中央に集まっている(Phase 1の配置)なら、内側の空間で1つの正三角形ができているので左側を塗る
+          const isCenter = pPos.every((p, i) => isSnapped(p, P1_TARGETS[i], 2));
+          const isKanizsa = pPos.every((p, i) => isSnapped(p, P2_TARGETS[i], 2));
+          
+          const fill1 = (isCenter || isKanizsa || phase === 2.5) ? "#374151" : "none";
+          const fill2 = (isKanizsa || phase === 2.5) ? "#374151" : "none";
+
+          icons.push(
+            <svg key="ui-t-1" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
+              <polygon points="0,-12 10.392,6 -10.392,6" fill={fill1} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
+            </svg>,
+            <svg key="ui-t-2" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
+              <polygon points="0,-12 10.392,6 -10.392,6" fill={fill2} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
+            </svg>
+          );
+        } else {
+          // Phase 3 & 4: ◯◯△
+          const isCleared = phase === 4;
+          icons.push(
+            <svg key="ui-c-1" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
+              <circle cx="0" cy="0" r="10" fill={isCleared ? "#374151" : "none"} stroke="#374151" strokeWidth="2" />
+            </svg>,
+            <svg key="ui-c-2" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
+              <circle cx="0" cy="0" r="10" fill={isCleared ? "#374151" : "none"} stroke="#374151" strokeWidth="2" />
+            </svg>,
+            <svg key="ui-t-3" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
+              <polygon points="0,-12 10.392,6 -10.392,6" fill={isCleared ? "#374151" : "none"} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
+            </svg>
+          );
+        }
+        return icons;
+      };
 
       return (
-        <div className="w-screen h-screen flex flex-col items-center justify-center relative overflow-hidden bg-white select-none">
+        <div className="fixed inset-0 w-full h-full flex flex-col items-center justify-center relative bg-white select-none">
           
           {/* Header UI (おしゃれなすりガラス) */}
-          <div className="absolute top-10 flex flex-col items-center z-10 pointer-events-none">
-            <div className="backdrop-blur-md bg-white/60 px-8 py-4 rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.05)] border border-gray-100 text-4xl tracking-[0.3em] font-light text-gray-800">
-              {uiText}
+          <div className="absolute top-12 flex flex-col items-center z-10 pointer-events-none">
+            <div className="flex flex-row items-center justify-center backdrop-blur-md bg-white/60 px-6 py-3 rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.05)] border border-gray-100">
+              {renderUIIcons()}
             </div>
           </div>
 
           {/* Clear Text */}
           <div className={`absolute inset-0 flex items-center justify-center z-30 pointer-events-none fade-transition ${clearText ? 'opacity-100' : 'opacity-0'}`}>
-            <h1 className="text-6xl font-light tracking-[0.5em] text-gray-800 ml-6">clear</h1>
+            <h1 className="text-5xl md:text-6xl font-light tracking-[0.5em] text-gray-800 ml-4 md:ml-6">clear</h1>
           </div>
 
           <svg 
@@ -239,7 +269,6 @@
                 <path d={V_PATHS[2]} style={{ transform: `translate(${vPos[2].x}px, ${vPos[2].y}px)` }} className="v-transition" />
               </g>
             ) : (
-              // Phase 3以降は完全に繋がった枠線の逆三角形
               <polygon points="0,150 -129.9038,-75 129.9038,-75" stroke="black" strokeWidth="2" fill="none" />
             )}
 
@@ -250,7 +279,7 @@
                   <path 
                     key={`p-${i}`}
                     d={PACMAN_PATH}
-                    // 回転角: 90=下向き, 210=左上向き, 330=右上向き (これにより60度の口が完璧に噛み合う)
+                    // 回転角: 90=下向き, 210=左上向き, 330=右上向き
                     transform={`translate(${pos.x}, ${pos.y}) rotate(${[90, 210, 330][i]})`}
                     onPointerDown={(e) => handlePointerDown(e, 'p', i)}
                     style={{ cursor: phase <= 2 ? (dragging?.index === i ? 'grabbing' : 'grab') : 'default' }}
@@ -280,7 +309,7 @@
           {/* Reset Button (スマホでも押しやすい下部配置) */}
           <button 
             onClick={resetGame}
-            className="absolute bottom-10 px-8 py-3 rounded-full text-gray-400 border border-gray-200 hover:bg-gray-50 transition-colors z-20 backdrop-blur-sm bg-white/80"
+            className="absolute bottom-8 md:bottom-10 px-8 py-3 rounded-full text-gray-400 border border-gray-200 hover:bg-gray-50 transition-colors z-20 backdrop-blur-sm bg-white/80"
           >
             Reset
           </button>
