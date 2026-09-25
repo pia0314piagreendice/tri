@@ -2,16 +2,18 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Kanizsa Illusion Puzzle</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background-color: #ffffff; touch-action: none; overscroll-behavior: none; }
+    /* Prevent overscroll and touch default actions strictly */
+    body { margin: 0; background-color: #ffffff; overscroll-behavior: none; touch-action: none; overflow: hidden; }
     .fade-transition { transition: opacity 0.5s ease-in-out; }
     .v-transition { transition: transform 1.2s ease-in-out; }
+    .icon-transition { transition: fill 0.3s ease, stroke 0.3s ease; }
   </style>
 </head>
 <body>
@@ -20,77 +22,99 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // === 絶対的な幾何学定数 ===
-    const R = 150; // 外側の基準半径 (Kanizsa三角形の頂点への距離)
-    const r = 30;  // パックマンの半径
-    const D_DIAMOND = r * Math.sqrt(3); // 51.9615 (ダイヤ形成時の中心距離)
+    // === 1. Absolute Geometry Constants ===
+    const R = 150; // Distance to Kanizsa outer vertices
+    const r = 30;  // Pacman radius
+    const D_DIAMOND = r * Math.sqrt(3); // 51.9615 (Distance to center for Diamond snap)
     
-    // === 各フェーズのターゲット座標 ===
-    // Phase 1 (ダイヤ): 中央のV字(0,0)に対して、パックマンが向かい合う位置
+    // === 2. Target Coordinates ===
+    // Phase 1 (Diamonds): Snap points for the 3 Pacmen facing the center (0,0)
     const P1_TARGETS = [
       { x: 0, y: -D_DIAMOND }, 
       { x: D_DIAMOND * 0.866025, y: D_DIAMOND * 0.5 }, 
       { x: -D_DIAMOND * 0.866025, y: D_DIAMOND * 0.5 }
     ];
 
-    // Phase 2 (カニッツァ): 白い上向き正三角形の頂点位置
+    // Phase 2 (Kanizsa): Snap points for the upward white triangle
     const P2_TARGETS = [
       { x: 0, y: -R },
       { x: R * 0.866025, y: R * 0.5 },
       { x: -R * 0.866025, y: R * 0.5 }
     ];
 
-    // V字の配置座標
+    // V-Shape positions
     const V1_POSITIONS = [
-      { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 } // 初期は中央で「＊」型
+      { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 } // Phase 1: Asterisk at center
     ];
 
     const V2_POSITIONS = [
-      { x: 0, y: R }, // 下角
-      { x: -R * 0.866025, y: -R * 0.5 }, // 左上角
-      { x: R * 0.866025, y: -R * 0.5 }  // 右上角
+      { x: 0, y: R }, // Bottom
+      { x: -R * 0.866025, y: -R * 0.5 }, // Top-Left
+      { x: R * 0.866025, y: -R * 0.5 }  // Top-Right
     ];
 
-    // Phase 3 (Last): 白い正三角形の吸い付き座標 (黒丸を覆い、黒線を削らないように外側へ+30px)
+    // Phase 3: White Triangle Targets (Offset 30px outwards to prevent clipping the black border)
     const W_TARGETS = [
       { x: 0, y: -R - 30 },
       { x: (R + 30) * 0.866025, y: (R + 30) * 0.5 },
       { x: -(R + 30) * 0.866025, y: (R + 30) * 0.5 }
     ];
 
-    // === 絶対に崩れないSVGパス ===
-    // 完全に60度開いたパックマン (右向きベース: 弧のフラグを 0 1 0 に完全固定)
+    // === 3. Flawless SVG Paths ===
+    // Pacman: Strictly 60-degree open mouth. Absolute flags (0 1 0) ensure it never deforms on rotation.
     const PACMAN_PATH = `M 0 0 L 25.98076 -15 A 30 30 0 1 0 25.98076 15 Z`;
     
-    // V字のSVGパス (各々が完全な正三角形の辺の1/3の長さ = 86.6025)
+    // V-Shapes: Exactly 1/3 of the final large triangle sides (Side length = R * sqrt(3) = 259.8) -> 1/3 = 86.6
     const V_PATHS = [
-      `M -43.3013 -75 L 0 0 L 43.3013 -75`, // V0: 上へ開く
-      `M 86.6025 0 L 0 0 L 43.3013 75`,     // V1: 右下へ開く
-      `M -43.3013 75 L 0 0 L -86.6025 0`    // V2: 左下へ開く
+      `M -43.3013 -75 L 0 0 L 43.3013 -75`, // V0
+      `M 86.6025 0 L 0 0 L 43.3013 75`,     // V1
+      `M -43.3013 75 L 0 0 L -86.6025 0`    // V2
     ];
+
+    // === 4. UI SVG Icons ===
+    const IconDiamond = ({ filled }) => (
+      <svg width="24" height="32" viewBox="-12 -16 24 32" className="mx-1 drop-shadow-sm">
+        <polygon points="0,-14 9,0 0,14 -9,0" fill={filled ? "#1f2937" : "none"} stroke="#1f2937" strokeWidth="2" strokeLinejoin="round" className="icon-transition" />
+      </svg>
+    );
+    const IconTriangle = ({ filled }) => (
+      <svg width="28" height="28" viewBox="-14 -14 28 28" className="mx-1 drop-shadow-sm">
+        <polygon points="0,-12 10.392,6 -10.392,6" fill={filled ? "#1f2937" : "none"} stroke="#1f2937" strokeWidth="2" strokeLinejoin="round" className="icon-transition" />
+      </svg>
+    );
+    const IconCircle = ({ filled }) => (
+      <svg width="28" height="28" viewBox="-14 -14 28 28" className="mx-1 drop-shadow-sm">
+        <circle cx="0" cy="0" r="10" fill={filled ? "#1f2937" : "none"} stroke="#1f2937" strokeWidth="2" className="icon-transition" />
+      </svg>
+    );
 
     function App() {
       const svgRef = useRef(null);
+      
+      // Game States
       const [phase, setPhase] = useState(1);
       
-      // パックマンの初期位置 (上だけはまっている)
+      // Pacmen Initial Positions: P0 pre-snapped. P1, P2 side-by-side at bottom-left.
       const [pPos, setPPos] = useState([
         { x: P1_TARGETS[0].x, y: P1_TARGETS[0].y },
-        { x: -100, y: 180 },
-        { x: 100, y: 180 }
+        { x: -160, y: 180 },
+        { x: -80, y: 180 } 
       ]);
       const [vPos, setVPos] = useState(V1_POSITIONS);
-      const [wPos, setWPos] = useState({ x: 0, y: 0 }); // 白い正三角形の位置
+      const [wPos, setWPos] = useState({ x: 0, y: 0 });
       
       const [clearText, setClearText] = useState(false);
       const [dragging, setDragging] = useState(null);
 
-      // 吸い付き判定 (スナップ)
+      // Snap logic
       const isSnapped = (pos, target, radius = 40) => {
         return Math.hypot(pos.x - target.x, pos.y - target.y) < radius;
       };
 
       const handlePointerDown = (e, type, index = null) => {
+        // Prevent dragging during transition phases (1.2, 1.5, 2.5)
+        if (phase !== 1 && phase !== 2 && phase !== 3) return;
+
         if ((phase === 1 || phase === 2) && type === 'p') {
           setDragging({ type, index, startX: e.clientX, startY: e.clientY, initialX: pPos[index].x, initialY: pPos[index].y });
         } else if (phase === 3 && type === 'w') {
@@ -107,11 +131,8 @@
         startPt.x = dragging.startX; startPt.y = dragging.startY;
         
         const CTM = svg.getScreenCTM().inverse();
-        const currentSvgPt = pt.matrixTransform(CTM);
-        const startSvgPt = startPt.matrixTransform(CTM);
-        
-        const dx = currentSvgPt.x - startSvgPt.x;
-        const dy = currentSvgPt.y - startSvgPt.y;
+        const dx = pt.matrixTransform(CTM).x - startPt.matrixTransform(CTM).x;
+        const dy = pt.matrixTransform(CTM).y - startPt.matrixTransform(CTM).y;
 
         if (dragging.type === 'p') {
           const newPos = [...pPos];
@@ -138,14 +159,19 @@
           const isAllSnappedToP1 = newPos.every((p, i) => isSnapped(p, P1_TARGETS[i], 2));
           const isAllSnappedToP2 = newPos.every((p, i) => isSnapped(p, P2_TARGETS[i], 2));
 
+          // Strict Phase 1 logic: 1.2s delay -> V-shapes move -> 1.2s delay -> Phase 2
           if (phase === 1 && isAllSnappedToP1) {
-            setPhase(1.5);
-            setVPos(V2_POSITIONS); 
-            setTimeout(() => setPhase(2), 1200);
+            setPhase(1.2); // Wait state
+            setTimeout(() => {
+              setPhase(1.5); // Move state
+              setVPos(V2_POSITIONS);
+              setTimeout(() => setPhase(2), 1200);
+            }, 1200);
           }
           
+          // Phase 2 logic: 1.2s delay -> Phase 3
           if (phase === 2 && isAllSnappedToP2) {
-            setPhase(2.5);
+            setPhase(2.5); // Wait state
             setTimeout(() => setPhase(3), 1200);
           }
 
@@ -164,7 +190,7 @@
           if (snapped) {
             setPhase(4);
             setClearText(true);
-            setTimeout(() => setClearText(false), 2000);
+            setTimeout(() => setClearText(false), 2000); // Disappears strictly after 2 seconds
           }
         }
         setDragging(null);
@@ -183,8 +209,8 @@
         setPhase(1);
         setPPos([
           { x: P1_TARGETS[0].x, y: P1_TARGETS[0].y },
-          { x: -100, y: 180 },
-          { x: 100, y: 180 }
+          { x: -160, y: 180 },
+          { x: -80, y: 180 }
         ]);
         setVPos(V1_POSITIONS);
         setWPos({ x: 0, y: 0 });
@@ -192,76 +218,65 @@
         setDragging(null);
       };
 
-      // UI Icons Render Logic
-      const renderUIIcons = () => {
-        const icons = [];
-        
-        if (phase === 1 || phase === 1.5) {
-          // Phase 1: 縦に細長いトランプのダイヤ型 (points="0,-14 9,0 0,14 -9,0")
-          for (let i = 0; i < 3; i++) {
-            const isFilled = isSnapped(pPos[i], P1_TARGETS[i], 2);
-            icons.push(
-              <svg key={`ui-d-${i}`} width="24" height="32" viewBox="-12 -16 24 32" className="mx-1">
-                <polygon points="0,-14 9,0 0,14 -9,0" fill={isFilled ? "#374151" : "none"} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
-              </svg>
-            );
-          }
-        } else if (phase === 2 || phase === 2.5) {
-          // Phase 2: 正三角形 (▲△)
-          // パックマンが中央に集まっている(Phase 1の配置)なら、内側の空間で1つの正三角形ができているので左側を塗る
-          const isCenter = pPos.every((p, i) => isSnapped(p, P1_TARGETS[i], 2));
-          const isKanizsa = pPos.every((p, i) => isSnapped(p, P2_TARGETS[i], 2));
+      // === Top UI Logic ===
+      const renderUI = () => {
+        if (phase < 2) {
+          // Phase 1, 1.2, 1.5: Three Tall Diamonds
+          return (
+            <div className="flex gap-4">
+              <IconDiamond filled={isSnapped(pPos[0], P1_TARGETS[0], 2)} />
+              <IconDiamond filled={isSnapped(pPos[1], P1_TARGETS[1], 2)} />
+              <IconDiamond filled={isSnapped(pPos[2], P1_TARGETS[2], 2)} />
+            </div>
+          );
+        } else if (phase >= 2 && phase < 3) {
+          // Phase 2, 2.5: Two Triangles
+          const isCenterFormation = pPos.every((p, i) => isSnapped(p, P1_TARGETS[i], 2));
+          const isKanizsaFormation = pPos.every((p, i) => isSnapped(p, P2_TARGETS[i], 2));
           
-          const fill1 = (isCenter || isKanizsa || phase === 2.5) ? "#374151" : "none";
-          const fill2 = (isKanizsa || phase === 2.5) ? "#374151" : "none";
-
-          icons.push(
-            <svg key="ui-t-1" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
-              <polygon points="0,-12 10.392,6 -10.392,6" fill={fill1} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
-            </svg>,
-            <svg key="ui-t-2" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
-              <polygon points="0,-12 10.392,6 -10.392,6" fill={fill2} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
-            </svg>
+          const fill1 = isCenterFormation || isKanizsaFormation || phase === 2.5;
+          const fill2 = isKanizsaFormation || phase === 2.5;
+          
+          return (
+            <div className="flex gap-4">
+              <IconTriangle filled={fill1} />
+              <IconTriangle filled={fill2} />
+            </div>
           );
         } else {
-          // Phase 3 & 4: ◯◯△
+          // Phase 3, 4: Two Circles, One Triangle
           const isCleared = phase === 4;
-          icons.push(
-            <svg key="ui-c-1" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
-              <circle cx="0" cy="0" r="10" fill={isCleared ? "#374151" : "none"} stroke="#374151" strokeWidth="2" />
-            </svg>,
-            <svg key="ui-c-2" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
-              <circle cx="0" cy="0" r="10" fill={isCleared ? "#374151" : "none"} stroke="#374151" strokeWidth="2" />
-            </svg>,
-            <svg key="ui-t-3" width="28" height="28" viewBox="-14 -14 28 28" className="mx-1">
-              <polygon points="0,-12 10.392,6 -10.392,6" fill={isCleared ? "#374151" : "none"} stroke="#374151" strokeWidth="2" strokeLinejoin="round" />
-            </svg>
+          return (
+            <div className="flex gap-4">
+              <IconCircle filled={isCleared} />
+              <IconCircle filled={isCleared} />
+              <IconTriangle filled={isCleared} />
+            </div>
           );
         }
-        return icons;
       };
 
       return (
-        <div className="fixed inset-0 w-full h-full flex flex-col items-center justify-center relative bg-white select-none">
+        <div className="fixed inset-0 w-full h-full flex flex-col items-center justify-center bg-white select-none overflow-hidden">
           
-          {/* Header UI (おしゃれなすりガラス) */}
+          {/* Header UI */}
           <div className="absolute top-12 flex flex-col items-center z-10 pointer-events-none">
-            <div className="flex flex-row items-center justify-center backdrop-blur-md bg-white/60 px-6 py-3 rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.05)] border border-gray-100">
-              {renderUIIcons()}
+            <div className="flex flex-row items-center justify-center backdrop-blur-md bg-white/70 px-8 py-4 rounded-3xl shadow-[0_4px_30px_rgba(0,0,0,0.06)] border border-gray-100 min-h-[72px] min-w-[180px]">
+              {renderUI()}
             </div>
           </div>
 
           {/* Clear Text */}
           <div className={`absolute inset-0 flex items-center justify-center z-30 pointer-events-none fade-transition ${clearText ? 'opacity-100' : 'opacity-0'}`}>
-            <h1 className="text-5xl md:text-6xl font-light tracking-[0.5em] text-gray-800 ml-4 md:ml-6">clear</h1>
+            <h1 className="text-5xl md:text-6xl font-light tracking-[0.5em] text-gray-900 ml-4 md:ml-6 uppercase">clear</h1>
           </div>
 
           <svg 
             ref={svgRef}
             viewBox="-250 -250 500 500" 
-            className="w-full h-full max-w-2xl max-h-2xl"
+            className="w-full h-full max-w-2xl max-h-2xl mt-4"
           >
-            {/* 背景の黒線 (V字 または 完全な逆三角形) */}
+            {/* Background V-Shapes or Solid Triangle */}
             {phase < 3 ? (
               <g stroke="black" strokeWidth="2" fill="none">
                 <path d={V_PATHS[0]} style={{ transform: `translate(${vPos[0].x}px, ${vPos[0].y}px)` }} className="v-transition" />
@@ -269,17 +284,17 @@
                 <path d={V_PATHS[2]} style={{ transform: `translate(${vPos[2].x}px, ${vPos[2].y}px)` }} className="v-transition" />
               </g>
             ) : (
+              // Phase 3+: Instantly becomes a solid outlined triangle. No transitions, pure visual flip.
               <polygon points="0,150 -129.9038,-75 129.9038,-75" stroke="black" strokeWidth="2" fill="none" />
             )}
 
-            {/* 黒い図形 (パックマン または 完全な黒丸) */}
+            {/* Draggable Pacmen or Solid Black Circles */}
             {phase < 3 ? (
               <g fill="black">
                 {pPos.map((pos, i) => (
                   <path 
                     key={`p-${i}`}
                     d={PACMAN_PATH}
-                    // 回転角: 90=下向き, 210=左上向き, 330=右上向き
                     transform={`translate(${pos.x}, ${pos.y}) rotate(${[90, 210, 330][i]})`}
                     onPointerDown={(e) => handlePointerDown(e, 'p', i)}
                     style={{ cursor: phase <= 2 ? (dragging?.index === i ? 'grabbing' : 'grab') : 'default' }}
@@ -294,7 +309,8 @@
               </g>
             )}
 
-            {/* ドラッグ可能な白い正三角形 (Phase 3 & 4) 縁取り・影一切なし */}
+            {/* Draggable Pure White Triangle (Phase 3+) */}
+            {/* NO borders, NO drop-shadows. Pure #ffffff. */}
             {phase >= 3 && (
               <polygon 
                 points={`0,-150 129.9038,75 -129.9038,75`}
@@ -306,13 +322,15 @@
             )}
           </svg>
 
-          {/* Reset Button (スマホでも押しやすい下部配置) */}
-          <button 
-            onClick={resetGame}
-            className="absolute bottom-8 md:bottom-10 px-8 py-3 rounded-full text-gray-400 border border-gray-200 hover:bg-gray-50 transition-colors z-20 backdrop-blur-sm bg-white/80"
-          >
-            Reset
-          </button>
+          {/* Reset Button (Safely at bottom-16 to clear mobile toolbars) */}
+          <div className="absolute bottom-16 w-full flex justify-center z-20 pointer-events-none">
+            <button 
+              onClick={resetGame}
+              className="pointer-events-auto px-8 py-3 rounded-full text-gray-500 font-medium tracking-widest border border-gray-200 hover:bg-gray-100 hover:text-gray-800 transition-colors backdrop-blur-md bg-white/80 shadow-sm"
+            >
+              RESET
+            </button>
+          </div>
         </div>
       );
     }
